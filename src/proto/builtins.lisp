@@ -790,83 +790,15 @@ a symbol naming a special variable (e.g. *qq-marker*) resolves to its value."
 ;;; --- loop (subset) ---
 
 (defun eval-loop (env body)
-  "Evaluate a LOOP form (subset)."
+  "Evaluate a LOOP form. Simple loop (all compound forms) repeats forever;
+otherwise the extended-loop engine (loop.lisp) handles the clause vocabulary."
   (if (every #'consp body)
       (loop (clef-eval-seq body env))
       (eval-extended-loop env body)))
 
-(defun eval-extended-loop (env body)
-  "A small extended-loop subset: for ... in, collect, sum, append, do, return."
-  (let ((result '())
-        (sum 0)
-        (append-acc '())
-        (mode :none))
-    (let ((mode-box (list :none)))
-      (eval-loop-clauses env body
-                         :result (lambda (v) (setf (car mode-box) :collect) (push v result))
-                         :sum (lambda (v) (setf (car mode-box) :sum) (incf sum v))
-                         :appendf (lambda (v) (setf (car mode-box) :append)
-                                     (setf append-acc (nconc append-acc (copy-list v)))))
-      (case (car mode-box)
-        (:collect (nreverse result))
-        (:sum sum)
-        (:append append-acc)
-        (t nil)))))
-
-(defun eval-loop-clauses (env clauses &key result sum appendf)
-  "Parse and run loop clauses. Small subset: for <var> in <list> then one action.
-Note: we use %EVAL-PRIMARY (host multiple values -> first), not PRIMARY
-\(which expects a values list)."
-  (let ((iter-spec nil)
-        (action nil))
-    (loop while clauses
-          for tok = (pop clauses)
-          do (cond
-               ((and (symbolp tok) (string-equal (symbol-name tok) "FOR"))
-                (let ((var (pop clauses)) (prep (pop clauses)))
-                  (unless (string-equal (symbol-name prep) "IN")
-                    (error "loop: only FOR .. IN supported, got ~s" prep))
-                  (setf iter-spec (list var (pop clauses)))))
-               ((and (symbolp tok) (string-equal (symbol-name tok) "DO"))
-                (setf action (list :do (pop clauses))))
-               ((and (symbolp tok) (string-equal (symbol-name tok) "COLLECT"))
-                (setf action (list :collect (pop clauses))))
-               ((and (symbolp tok) (string-equal (symbol-name tok) "SUM"))
-                (setf action (list :sum (pop clauses))))
-               ((and (symbolp tok) (string-equal (symbol-name tok) "APPEND"))
-                (setf action (list :append (pop clauses))))
-               ((and (symbolp tok) (string-equal (symbol-name tok) "RETURN"))
-                (setf action (list :return (pop clauses))))
-               (t (error "loop: unsupported clause ~s" tok))))
-    (unless (and iter-spec action)
-      (error "loop: need FOR .. IN and an action"))
-    (destructuring-bind (var list-form) iter-spec
-      (destructuring-bind (kind action-form) action
-        (let ((lst (primary (clef-eval list-form env))))
-          (ecase kind
-            (:do
-             (dolist (v lst nil)
-               (let ((e (clef/proto/env:make-lexical-env env)))
-                 (clef/proto/env:bind-variable e var v)
-                 (%eval action-form e))))
-            (:collect
-             (dolist (v lst nil)
-               (let ((e (clef/proto/env:make-lexical-env env)))
-                 (clef/proto/env:bind-variable e var v)
-                 (funcall result (%eval-primary action-form e)))))
-            (:sum
-             (dolist (v lst nil)
-               (let ((e (clef/proto/env:make-lexical-env env)))
-                 (clef/proto/env:bind-variable e var v)
-                 (funcall sum (%eval-primary action-form e)))))
-            (:append
-             (dolist (v lst nil)
-               (let ((e (clef/proto/env:make-lexical-env env)))
-                 (clef/proto/env:bind-variable e var v)
-                 (funcall appendf (%eval-primary action-form e)))))
-            (:return
-             (return-from eval-loop-clauses
-               (primary (clef-eval action-form env))))))))))
+;;; The extended-loop engine (eval-extended-loop and helpers) lives in
+;;; src/proto/loop.lisp, which supersedes the old for-in-only implementation
+;;; that used to be here.
 
 ;;; --- defstruct (minimal) ---
 
