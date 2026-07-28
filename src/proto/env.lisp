@@ -22,7 +22,9 @@
   ;; Toplevel-only slots.
   (toplevel-p nil)
   (specials (make-hash-table :test 'eq)) ; proclaimed/special variables
-  (constants (make-hash-table :test 'eq)))
+  (constants (make-hash-table :test 'eq))
+  ;; Free-form per-image storage (CLOS registries, etc.).
+  (misc (make-hash-table :test 'eq)))
 
 (defun make-toplevel-env ()
   "A fresh global environment."
@@ -148,7 +150,7 @@
 
 (defparameter *internal-special-operators*
   '("%DESTRUCTURING-BIND" "%MULTIPLE-VALUE-BIND" "%DO" "%DO*"
-    "%UNWIND-PROTECT" "%LOOP")
+    "%UNWIND-PROTECT" "%LOOP" "%SETF")
   "Boot-time special operator names (matched by symbol-name, any package).")
 
 (defun special-operator-p (name)

@@ -659,20 +659,11 @@ CL-USER to match how the boot files are read by the host reader."
                  (clef/proto/env:defconstant* env (unquote-name name) (primary (clef-eval init env)))
                  `',(unquote-name name))))
 
-    ;; %setf: host setf over quoted places. (%setf 'place val 'place2 val2)
-    (funcall regm "%setf"
-             (lambda (form call-env)
-               (loop for (place-form val-form) on (cdr form) by #'cddr
-                     for place = (primary (clef-eval place-form call-env))
-                     for val = (primary (clef-eval val-form call-env))
-                     do (set-place call-env place val))
-               nil))
-
     ;; NOTE: %multiple-value-bind, %destructuring-bind, %do, %do*,
-    ;; %unwind-protect, and %loop are SPECIAL OPERATORS, handled directly by
-    ;; the evaluator (eval-special in eval.lisp) because they compute values
-    ;; rather than returning expansion forms. They are intentionally NOT
-    ;; registered as macros here.
+    ;; %unwind-protect, %loop, and %setf are SPECIAL OPERATORS, handled
+    ;; directly by the evaluator (eval-special in eval.lisp) because they
+    ;; compute values rather than returning expansion forms. They are
+    ;; intentionally NOT registered as macros here.
 
     ;; %defstruct
     (funcall regm "%defstruct"
@@ -761,7 +752,10 @@ FN-FORM evaluates to the body function (a lambda over the vars)."
     ((cl:symbol-value) (setf (symbol-value (car args)) value))
     ((cl:symbol-plist) (setf (symbol-plist (car args)) value))
     ((cl:fill-pointer) (setf (fill-pointer (car args)) value))
-    ((cl:slot-value) (setf (slot-value (car args) (cadr args)) value))
+    ((cl:slot-value)
+     (if (cinstance-p (car args))
+         (setf (clos-slot-value (car args) (cadr args)) value)
+         (setf (slot-value (car args) (cadr args)) value)))
     ((cl:subseq) (replace (car args) value :start1 (cadr args) :end1 (caddr args)))
     ((cl:rest) (rplacd (car args) value))
     ((cl:first) (rplaca (car args) value))

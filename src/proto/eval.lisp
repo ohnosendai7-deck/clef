@@ -158,7 +158,9 @@ multiple values. Empty body returns NIL."
               ((string-equal (car internal) "%UNWIND-PROTECT")
                (eval-p-unwind-protect args env))
               ((string-equal (car internal) "%LOOP")
-               (eval-p-loop args env))))))
+               (eval-p-loop args env))
+              ((string-equal (car internal) "%SETF")
+               (eval-p-setf args env))))))
   (case op
     ((quote) (car args))
     ((if)
@@ -411,3 +413,14 @@ loop macro, so unwrap the quote."
 (defun %eval-primary (form env)
   "Evaluate FORM in ENV and return its primary value (host multiple values)."
   (%eval form env))
+
+(defun eval-p-setf (args env)
+  "(%setf 'place1 val1 'place2 val2 ...) — set places, return the last value.
+Place subforms arrive quoted from the setf macro."
+  (let ((last nil))
+    (loop for (place-form val-form) on args by #'cddr
+          for place = (primary (clef-eval place-form env))
+          for val = (primary (clef-eval val-form env))
+          do (set-place env place val)
+             (setf last val))
+    last))
