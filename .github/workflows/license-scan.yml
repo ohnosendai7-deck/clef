@@ -1,0 +1,35 @@
+# Verifies the clean-room / public-domain invariant (CLEANROOM.md).
+# Every source file must carry a CC0 dedication header.
+name: license-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check every source file has a CC0 header
+        run: |
+          set -u
+          fail=0
+          # Source file extensions that must carry a dedication header.
+          # (.lisp/.lsp/.cl/.asd once code exists; scripts and configs now.)
+          while IFS= read -r -d '' f; do
+            if ! head -n 5 "$f" | grep -qiE 'cc0|public domain|creativecommons'; then
+              echo "MISSING CC0 HEADER: $f"
+              fail=1
+            fi
+          done < <(git ls-files -z '*.lisp' '*.lsp' '*.cl' '*.asd' '*.sh' '*.py' 2>/dev/null)
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::One or more source files lack a CC0/public-domain header."
+            exit 1
+          fi
+          echo "All tracked source files carry a CC0 header (or no source files yet)."

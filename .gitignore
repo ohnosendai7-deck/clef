@@ -1,0 +1,19 @@
+# Compiled Lisp artifacts — never commit these (see AGENTS.md).
+*.fasl
+*.o
+*.so
+*.elf
+*.image
+*.core
+
+# SBCL / build scratch
+/build/
+/dist/
+
+# Editor
+*~
+*.swp
+.#*
+
+# OS
+.DS_Store

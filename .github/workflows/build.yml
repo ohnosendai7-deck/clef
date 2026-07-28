@@ -1,0 +1,18 @@
+# Placeholder build CI. Real build/test jobs arrive with M0a code.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No buildable code yet
+        run: echo "Pre-M0a. The toolchain (SBCL-based cross-compiler) lands in M0a."
