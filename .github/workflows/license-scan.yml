@@ -20,16 +20,25 @@ jobs:
         run: |
           set -u
           fail=0
-          # Source file extensions that must carry a dedication header.
-          # (.lisp/.lsp/.cl/.asd once code exists; scripts and configs now.)
           while IFS= read -r -d '' f; do
-            if ! head -n 5 "$f" | grep -qiE 'cc0|public domain|creativecommons'; then
+            if ! head -n 6 "$f" | grep -qiE 'cc0|public domain|creativecommons'; then
               echo "MISSING CC0 HEADER: $f"
               fail=1
             fi
-          done < <(git ls-files -z '*.lisp' '*.lsp' '*.cl' '*.asd' '*.sh' '*.py' 2>/dev/null)
+          done < <(git ls-files -z '*.lisp' '*.lsp' '*.cl' '*.asd' '*.scm' '*.sh' '*.py' 2>/dev/null)
           if [ "$fail" -ne 0 ]; then
             echo "::error::One or more source files lack a CC0/public-domain header."
             exit 1
           fi
-          echo "All tracked source files carry a CC0 header (or no source files yet)."
+          echo "All tracked source files carry a CC0 header (or no matching files yet)."
+
+      - name: Check no non-PD license references crept into source
+        run: |
+          # Heuristic tripwire: source files should not embed GPL/LGPL text or
+          # copied attribution blocks from other CL implementations.
+          if grep -riEl 'gnu general public license|gnu lesser general public' \
+               --include='*.lisp' --include='*.asd' --include='*.cl' src test tools 2>/dev/null | grep .; then
+            echo "::error::Found GPL/LGPL reference in a source file (see above)."
+            exit 1
+          fi
+          echo "No GPL/LGPL references in source."

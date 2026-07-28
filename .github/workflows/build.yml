@@ -1,4 +1,4 @@
-# Placeholder build CI. Real build/test jobs arrive with M0a code.
+# Build and test CLEF on the SBCL bootstrap host.
 name: build
 
 on:
@@ -10,9 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  noop:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: No buildable code yet
-        run: echo "Pre-M0a. The toolchain (SBCL-based cross-compiler) lands in M0a."
+
+      - name: Install Guix
+        uses: PromyLOPh/guix-install-action@v1
+        with:
+          pullAfterInstall: false
+
+      - name: Install SBCL
+        run: guix install sbcl
+
+      - name: Run test suite
+        run: guix shell sbcl -- sh tools/run-tests.sh sbcl
+
+      - name: Run cold-core smoke test (zero-C ELF executes)
+        run: guix shell sbcl -- sh tools/run-smoke.sh sbcl
