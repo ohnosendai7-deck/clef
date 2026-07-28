@@ -126,7 +126,7 @@
     (when (ll-keys ll)
       (bind-keys ll rest binder eval-init))
     (when (and (not (ll-rest ll)) (not (ll-keys ll)) rest)
-      (error "Too many arguments: ~s" rest))
+      (error "Too many arguments: ~s for lambda-list ~s" rest ll))
     (dolist (aux (ll-aux ll))
       (destructuring-bind (var init) aux
         (bind-one var (funcall eval-init init) binder eval-init))))

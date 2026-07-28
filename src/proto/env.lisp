@@ -143,11 +143,20 @@
   '(block catch eval-when flet function go if labels let let*
     load-time-value locally macrolet multiple-value-call multiple-value-prog1
     progn progv quote return-from setq symbol-macrolet tagbody the throw
-    unwind-protect)
-  "The 25 ANSI special operators.")
+    unwind-protect declare)
+  "The 25 ANSI special operators, plus DECLARE (a no-op declaration form).")
+
+(defparameter *internal-special-operators*
+  '("%DESTRUCTURING-BIND" "%MULTIPLE-VALUE-BIND" "%DO" "%DO*"
+    "%UNWIND-PROTECT" "%LOOP")
+  "Boot-time special operator names (matched by symbol-name, any package).")
 
 (defun special-operator-p (name)
-  (and (symbolp name) (member name *special-operators*) t))
+  (and (symbolp name)
+       (or (member name *special-operators*)
+           (member (symbol-name name) *internal-special-operators*
+                   :test #'string-equal))
+       t))
 
 ;;; --- symbol macros ---
 

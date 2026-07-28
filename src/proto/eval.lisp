@@ -39,12 +39,18 @@
     (%make-clef-function :ll ll :env env :body body :name name)))
 
 (defun call-clef-function (fn args)
+  (when *trace-calls*
+    (format *trace-output* "~&call nargs=~d first-arg=~s~%"
+            (length args)
+            (and args (if (consp (car args)) (caar args) (car args)))))
   (let ((new-env (clef/proto/env:make-lexical-env (clef-function-env fn))))
     (clef/proto/ll:bind-lambda-list
      (clef-function-ll fn) args
      (lambda (var value) (clef/proto/env:bind-variable new-env var value))
      (lambda (init) (primary (clef-eval init new-env))))
     (clef-eval-seq (clef-function-body fn) new-env)))
+
+(defvar *trace-calls* nil)
 
 ;;; --- the evaluator ---
 
@@ -134,6 +140,25 @@ multiple values. Empty body returns NIL."
 ;;; --- special operators ---
 
 (defun eval-special (op args env)
+  ;; Boot-time internal special operators are matched by name (any package).
+  (let ((internal (and (symbolp op)
+                       (member (symbol-name op)
+                               clef/proto/env::*internal-special-operators*
+                               :test #'string-equal))))
+    (when internal
+      (return-from eval-special
+        (cond ((string-equal (car internal) "%DESTRUCTURING-BIND")
+               (eval-p-destructuring-bind args env))
+              ((string-equal (car internal) "%MULTIPLE-VALUE-BIND")
+               (eval-p-multiple-value-bind args env))
+              ((string-equal (car internal) "%DO")
+               (eval-p-do args env nil))
+              ((string-equal (car internal) "%DO*")
+               (eval-p-do args env t))
+              ((string-equal (car internal) "%UNWIND-PROTECT")
+               (eval-p-unwind-protect args env))
+              ((string-equal (car internal) "%LOOP")
+               (eval-p-loop args env))))))
   (case op
     ((quote) (car args))
     ((if)
@@ -160,6 +185,7 @@ multiple values. Empty body returns NIL."
     ((macrolet) (eval-macrolet (car args) (cdr args) env))
     ((symbol-macrolet) (eval-symbol-macrolet (car args) (cdr args) env))
     ((the) (%eval (cadr args) env))       ; ignore type for now
+    ((declare) (values nil))              ; declarations are no-ops in the prototype
     ((locally) (clef-eval-seq args env))
     ((eval-when) (eval-eval-when args env))
     ((load-time-value) (%eval (car args) env))
@@ -338,3 +364,50 @@ LAMBDA-LIST and evaluates BODY to produce the expansion."
          (lambda (var value) (clef/proto/env:bind-variable new var value))
          (lambda (init) (primary (clef-eval init new))))
         (primary (clef-eval-seq body new))))))
+
+;;; --- boot-time special operators ---
+;;; These compute values directly (unlike macros, whose expansions %eval would
+;;; re-evaluate). They are the value-computing glue the boot library builds on.
+;;; The heavy lifting (do/loop/defstruct/setf engines) lives in builtins.lisp.
+
+(defun eval-p-destructuring-bind (args env)
+  "(%destructuring-bind ll list-form fn-form) — destructure the value of
+LIST-FORM against LL by applying the function from FN-FORM to it."
+  (destructuring-bind (ll list-form fn-form) args
+    (declare (ignore ll))
+    (let ((list (primary (clef-eval list-form env)))
+          (fn (primary (clef-eval fn-form env))))
+      (clef-apply fn list))))
+
+(defun eval-p-multiple-value-bind (args env)
+  "(%multiple-value-bind vars mv-form fn-form) — bind VARS to the values of
+MV-FORM by applying the function from FN-FORM to them."
+  (destructuring-bind (vars mv-form fn-form) args
+    (declare (ignore vars))
+    (let ((vals (clef-eval mv-form env))
+          (fn (primary (clef-eval fn-form env))))
+      (clef-apply fn vals))))
+
+(defun eval-p-do (args env sequential)
+  "(%do vars end fn-form) / (%do* ...) — the do/do* engine."
+  (destructuring-bind (vars end fn-form) args
+    (eval-do env vars end fn-form sequential)))
+
+(defun eval-p-unwind-protect (args env)
+  "(%unwind-protect protected cleanup-fn-form)."
+  (destructuring-bind (protected cleanup-fn-form) args
+    (let ((cleanup (primary (clef-eval cleanup-fn-form env))))
+      (unwind-protect (values-list (clef-eval protected env))
+        (clef-apply cleanup '())))))
+
+(defun eval-p-loop (args env)
+  "(%loop 'body) — the loop engine (subset). The body arrives quoted from the
+loop macro, so unwrap the quote."
+  (let ((body (car args)))
+    (when (and (consp body) (eq (car body) 'cl:quote))
+      (setf body (cadr body)))
+    (eval-loop env body)))
+
+(defun %eval-primary (form env)
+  "Evaluate FORM in ENV and return its primary value (host multiple values)."
+  (%eval form env))

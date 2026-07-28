@@ -416,6 +416,9 @@
     (funcall regh 'cl:shadowing-import #'shadowing-import)
     (funcall regh 'cl:delete-package #'delete-package)
     (funcall regh 'cl:rename-package #'rename-package)
+    ;; in-package is a host concern for the prototype; make it a setq of *package*.
+    (funcall reg 'cl:in-package
+             (lambda (pkg) (setf *package* (find-package pkg)) pkg))
 
     ;;; --- I/O ---
     (funcall regh 'cl:format #'format)
@@ -595,7 +598,342 @@
 
     env))
 
+;;; --- boot-time host glue ---
+;;; These % forms are the primitives the boot library builds on. They are
+;;; registered as functions/macros that operate on the environment directly.
+
+(defun install-boot-glue (env)
+  "Install the % primitives the boot library needs. Names are interned in
+CL-USER to match how the boot files are read by the host reader."
+  (let* ((cl-user (find-package :cl-user))
+         (sym (lambda (name) (intern (string-upcase name) cl-user)))
+         (regm (lambda (name fn) (clef/proto/env:bind-macro env (funcall sym name) fn)))
+         (regf (lambda (name fn) (clef/proto/env:set-function-value env (funcall sym name) fn))))
+
+    ;;; quasiquote host glue (SBCL comma-struct accessors), in CL-USER.
+    (funcall regf "qq-comma-p" (lambda (x) (typep x 'sb-impl::comma)))
+    (funcall regf "qq-comma-kind" (lambda (x) (sb-impl::comma-kind x)))
+    (funcall regf "qq-comma-expr" (lambda (x) (sb-impl::comma-expr x)))
+
+    ;; %defmacro: (defmacro name expander-fn). The expander-fn is a Lisp
+    ;; function of (form env). We wrap it as a macro.
+    (funcall regm "%defmacro"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (let ((name (resolve-macro-name (cadr form) env))
+                     (expander-form (caddr form)))
+                 ;; evaluate the expander-fn form to get a function value
+                 (let ((expander (primary (clef-eval expander-form env))))
+                   (clef/proto/env:bind-macro
+                    env name
+                    (lambda (f e) (clef-apply expander (list f e)))))
+                 `',name)))
+
+    ;; %defun: define a named function in the toplevel.
+    (funcall regm "%defun"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (let ((name (unquote-name (cadr form)))
+                     (fn-form (caddr form)))
+                 (let ((fn (primary (clef-eval fn-form env))))
+                   (clef/proto/env:set-function-value env name fn))
+                 `',name)))
+
+    (funcall regm "%defvar"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (destructuring-bind (name init initp) (cdr form)
+                 (clef/proto/env:defvar* env (unquote-name name)
+                                         (and initp (primary (clef-eval init env))) initp)
+                 `',(unquote-name name))))
+    (funcall regm "%defparameter"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (destructuring-bind (name init) (cdr form)
+                 (clef/proto/env:defparameter* env (unquote-name name) (primary (clef-eval init env)))
+                 `',(unquote-name name))))
+    (funcall regm "%defconstant"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (destructuring-bind (name init) (cdr form)
+                 (clef/proto/env:defconstant* env (unquote-name name) (primary (clef-eval init env)))
+                 `',(unquote-name name))))
+
+    ;; %setf: host setf over quoted places. (%setf 'place val 'place2 val2)
+    (funcall regm "%setf"
+             (lambda (form call-env)
+               (loop for (place-form val-form) on (cdr form) by #'cddr
+                     for place = (primary (clef-eval place-form call-env))
+                     for val = (primary (clef-eval val-form call-env))
+                     do (set-place call-env place val))
+               nil))
+
+    ;; NOTE: %multiple-value-bind, %destructuring-bind, %do, %do*,
+    ;; %unwind-protect, and %loop are SPECIAL OPERATORS, handled directly by
+    ;; the evaluator (eval-special in eval.lisp) because they compute values
+    ;; rather than returning expansion forms. They are intentionally NOT
+    ;; registered as macros here.
+
+    ;; %defstruct
+    (funcall regm "%defstruct"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (let ((name (unquote-name (cadr form)))
+                     (slots (unquote-name (caddr form))))
+                 (eval-defstruct env name slots)
+                 `',name)))
+
+    env))
+
+(defun eval-do (env vars end fn-form sequential)
+  "Implement do/do*. VARS is a list of (var init step). END is (test . results).
+FN-FORM evaluates to the body function (a lambda over the vars)."
+  (let ((fn (primary (clef-eval fn-form env)))
+        (state (mapcar (lambda (v)
+                         (cons (car v) (primary (clef-eval (cadr v) env))))
+                       vars)))
+    (loop
+      ;; evaluate end test with current state
+      (let ((test-env (clef/proto/env:make-lexical-env env)))
+        (dolist (binding state)
+          (clef/proto/env:bind-variable test-env (car binding) (cdr binding)))
+        (when (primary (clef-eval (car end) test-env))
+          ;; evaluate result forms (clef-eval-seq already returns host MV)
+          (return (if (cdr end)
+                      (clef-eval-seq (cdr end) test-env)
+                      (values nil))))
+        ;; run body
+        (let ((args (mapcar #'cdr state)))
+          (clef-apply fn args))
+        ;; step
+        (let ((new-state
+                (if sequential
+                    (mapcar (lambda (v)
+                              (let ((val (if (cddr v)
+                                             (let ((e (clef/proto/env:make-lexical-env env)))
+                                               (dolist (b state)
+                                                 (clef/proto/env:bind-variable e (car b) (cdr b)))
+                                               (primary (clef-eval (caddr v) e)))
+                                             (cdr (assoc (car v) state)))))
+                                (cons (car v) val)))
+                            vars)
+                    ;; parallel: compute all steps against current state
+                    (let ((e (clef/proto/env:make-lexical-env env)))
+                      (dolist (b state)
+                        (clef/proto/env:bind-variable e (car b) (cdr b)))
+                      (mapcar (lambda (v)
+                                (cons (car v)
+                                      (if (cddr v)
+                                          (primary (clef-eval (caddr v) e))
+                                          (cdr (assoc (car v) state)))))
+                              vars)))))
+          (setf state new-state))))))
+
+(defun set-place (env place value)
+  "The setf engine: set PLACE (a quoted place form) to VALUE."
+  (cond
+    ((symbolp place)
+     (clef/proto/env:set-variable-value env place value))
+    ((consp place)
+     (let ((accessor (car place))
+           (args (mapcar (lambda (a) (primary (clef-eval a env))) (cdr place))))
+       (set-accessor-place accessor args value)))
+    (t (error "Cannot setf ~s" place))))
+
+(defun set-accessor-place (accessor args value)
+  "Set a place described by ACCESSOR applied to (evaluated) ARGS."
+  (case accessor
+    ((cl:car) (rplaca (car args) value))
+    ((cl:cdr) (rplacd (car args) value))
+    ((cl:caar) (rplaca (caar args) value))
+    ((cl:cadr) (rplaca (cadr args) value))
+    ((cl:cdar) (rplacd (cdar args) value))
+    ((cl:cddr) (rplacd (cddr args) value))
+    ((cl:caddr) (rplaca (caddr args) value))
+    ((cl:nth) (rplaca (nthcdr (car args) (cadr args)) value))
+    ((cl:aref) (setf (aref (car args) (cadr args)) value))
+    ((cl:svref) (setf (svref (car args) (cadr args)) value))
+    ((cl:char) (setf (char (car args) (cadr args)) value))
+    ((cl:schar) (setf (schar (car args) (cadr args)) value))
+    ((cl:elt) (setf (elt (car args) (cadr args)) value))
+    ((cl:gethash) (setf (gethash (car args) (cadr args)) value))
+    ((cl:getf) (setf (getf (car args) (cadr args)) value))
+    ((cl:symbol-value) (setf (symbol-value (car args)) value))
+    ((cl:symbol-plist) (setf (symbol-plist (car args)) value))
+    ((cl:fill-pointer) (setf (fill-pointer (car args)) value))
+    ((cl:slot-value) (setf (slot-value (car args) (cadr args)) value))
+    ((cl:subseq) (replace (car args) value :start1 (cadr args) :end1 (caddr args)))
+    ((cl:rest) (rplacd (car args) value))
+    ((cl:first) (rplaca (car args) value))
+    ((cl:second) (rplaca (cdr (car args)) value))
+    ((cl:third) (rplaca (cddr (car args)) value))
+    (t (error "setf of accessor ~s not supported" accessor)))
+  value)
+
 (defun coerce-map-fn (fn)
   "Wrap a Lisp function (clef-function or host function) so host higher-order
 functions (mapcar, reduce, sort) can call it."
   (lambda (&rest args) (clef-apply fn args)))
+
+(defun unquote-name (name-form)
+  "The % defining macros receive quoted names ((quote sym)) from the boot
+file's defmacro-generated expansions. Unwrap to the raw symbol; pass through
+anything already a symbol."
+  (cond ((and (consp name-form) (eq (car name-form) 'cl:quote)) (cadr name-form))
+        ((symbolp name-form) name-form)
+        (t name-form)))
+
+(defun resolve-macro-name (name-form env)
+  "Resolve a %defmacro name argument to a symbol. Quoted symbols unquote;
+a symbol naming a special variable (e.g. *qq-marker*) resolves to its value."
+  (let ((n (unquote-name name-form)))
+    (if (and (symbolp n)
+             (not (keywordp n))
+             (clef/proto/env:variable-bound-p env n))
+        (clef/proto/env:lookup-variable env n)
+        n)))
+
+;;; --- loop (subset) ---
+
+(defun eval-loop (env body)
+  "Evaluate a LOOP form (subset)."
+  (if (every #'consp body)
+      (loop (clef-eval-seq body env))
+      (eval-extended-loop env body)))
+
+(defun eval-extended-loop (env body)
+  "A small extended-loop subset: for ... in, collect, sum, append, do, return."
+  (let ((result '())
+        (sum 0)
+        (append-acc '())
+        (mode :none))
+    (let ((mode-box (list :none)))
+      (eval-loop-clauses env body
+                         :result (lambda (v) (setf (car mode-box) :collect) (push v result))
+                         :sum (lambda (v) (setf (car mode-box) :sum) (incf sum v))
+                         :appendf (lambda (v) (setf (car mode-box) :append)
+                                     (setf append-acc (nconc append-acc (copy-list v)))))
+      (case (car mode-box)
+        (:collect (nreverse result))
+        (:sum sum)
+        (:append append-acc)
+        (t nil)))))
+
+(defun eval-loop-clauses (env clauses &key result sum appendf)
+  "Parse and run loop clauses. Small subset: for <var> in <list> then one action.
+Note: we use %EVAL-PRIMARY (host multiple values -> first), not PRIMARY
+\(which expects a values list)."
+  (let ((iter-spec nil)
+        (action nil))
+    (loop while clauses
+          for tok = (pop clauses)
+          do (cond
+               ((and (symbolp tok) (string-equal (symbol-name tok) "FOR"))
+                (let ((var (pop clauses)) (prep (pop clauses)))
+                  (unless (string-equal (symbol-name prep) "IN")
+                    (error "loop: only FOR .. IN supported, got ~s" prep))
+                  (setf iter-spec (list var (pop clauses)))))
+               ((and (symbolp tok) (string-equal (symbol-name tok) "DO"))
+                (setf action (list :do (pop clauses))))
+               ((and (symbolp tok) (string-equal (symbol-name tok) "COLLECT"))
+                (setf action (list :collect (pop clauses))))
+               ((and (symbolp tok) (string-equal (symbol-name tok) "SUM"))
+                (setf action (list :sum (pop clauses))))
+               ((and (symbolp tok) (string-equal (symbol-name tok) "APPEND"))
+                (setf action (list :append (pop clauses))))
+               ((and (symbolp tok) (string-equal (symbol-name tok) "RETURN"))
+                (setf action (list :return (pop clauses))))
+               (t (error "loop: unsupported clause ~s" tok))))
+    (unless (and iter-spec action)
+      (error "loop: need FOR .. IN and an action"))
+    (destructuring-bind (var list-form) iter-spec
+      (destructuring-bind (kind action-form) action
+        (let ((lst (primary (clef-eval list-form env))))
+          (ecase kind
+            (:do
+             (dolist (v lst nil)
+               (let ((e (clef/proto/env:make-lexical-env env)))
+                 (clef/proto/env:bind-variable e var v)
+                 (%eval action-form e))))
+            (:collect
+             (dolist (v lst nil)
+               (let ((e (clef/proto/env:make-lexical-env env)))
+                 (clef/proto/env:bind-variable e var v)
+                 (funcall result (%eval-primary action-form e)))))
+            (:sum
+             (dolist (v lst nil)
+               (let ((e (clef/proto/env:make-lexical-env env)))
+                 (clef/proto/env:bind-variable e var v)
+                 (funcall sum (%eval-primary action-form e)))))
+            (:append
+             (dolist (v lst nil)
+               (let ((e (clef/proto/env:make-lexical-env env)))
+                 (clef/proto/env:bind-variable e var v)
+                 (funcall appendf (%eval-primary action-form e)))))
+            (:return
+             (return-from eval-loop-clauses
+               (primary (clef-eval action-form env))))))))))
+
+;;; --- defstruct (minimal) ---
+
+(defun eval-defstruct (env name slots)
+  "Install a minimal structure backed by a tagged vector."
+  (let ((slot-names (mapcar (lambda (s) (if (consp s) (car s) s)) slots))
+        (slot-inits (mapcar (lambda (s) (if (and (consp s) (cdr s)) (cadr s) nil)) slots)))
+    (let ((ctor-name (intern (format nil "MAKE-~a" (symbol-name name)) (symbol-package name))))
+      (clef/proto/env:set-function-value
+       env ctor-name
+       (lambda (&rest keyargs)
+         (let ((v (make-array (1+ (length slot-names)) :initial-element nil)))
+           (setf (aref v 0) name)
+           (dotimes (i (length slot-names))
+             (let* ((init (nth i slot-inits))
+                    (kw (intern (symbol-name (nth i slot-names)) :keyword))
+                    (val (if (keyword-arg-present kw keyargs)
+                             (getf keyargs kw)
+                             (eval-struct-init init))))
+               (setf (aref v (1+ i)) val)))
+           v))))
+    (let ((pred-name (intern (format nil "~a-P" (symbol-name name)) (symbol-package name))))
+      (clef/proto/env:set-function-value
+       env pred-name
+       (lambda (x) (and (vectorp x) (> (length x) 0) (eq (aref x 0) name)))))
+    (loop for slot in slot-names
+          for i from 1
+          do (let ((acc-name (intern (format nil "~a-~a" (symbol-name name) (symbol-name slot))
+                                     (symbol-package name)))
+                   (idx i))
+               (clef/proto/env:set-function-value
+                env acc-name
+                (lambda (obj) (aref obj idx))))))
+  name)
+
+(defun eval-struct-init (init)
+  (if (or (null init) (keywordp init) (numberp init) (stringp init))
+      init
+      (primary (clef-eval init (clef/proto/env:make-toplevel-env)))))
+
+(defun keyword-arg-present (kw keyargs)
+  (loop for (k v) on keyargs by #'cddr thereis (eq k kw)))
+
+;;; --- boot loader ---
+
+(defvar *boot-files*
+  '("src/proto/boot/macros.lisp")
+  "Boot library files, evaluated in order into the environment.")
+
+(defun load-boot (env &optional (root *default-pathname-defaults*))
+  "Install builtins + boot glue, then evaluate the boot library into ENV."
+  (install-builtins env)
+  (install-boot-glue env)
+  (dolist (rel *boot-files* env)
+    (let ((path (merge-pathnames rel root)))
+      (load-lisp-file env path))))
+
+(defun load-lisp-file (env path)
+  "Read and evaluate each top-level form in PATH in ENV."
+  (with-open-file (in path :direction :input)
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (clef-eval form env)))
+  env)
