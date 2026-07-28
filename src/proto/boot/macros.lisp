@@ -174,6 +174,9 @@
          ,@(mapcar (lambda (v temp) `(setq ,v ,temp)) vars temps))
        ,(car vars))))
 
+(defmacro multiple-value-list (form)
+  `(%multiple-value-bind (&rest vals) ,form (lambda (&rest vals) vals)))
+
 (defmacro nth-value (n form)
   `(nth ,n (multiple-value-list ,form)))
 

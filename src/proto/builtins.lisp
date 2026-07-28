@@ -35,7 +35,6 @@
     (funcall reg 'cl:values (lambda (&rest vals) (values-list vals)))
     (funcall reg 'cl:values-list (lambda (list) (values-list list)))
     (funcall reg 'cl:nth-value (lambda (n mv) (nth n mv)))
-    (funcall reg 'cl:multiple-value-list (lambda (mv) mv))
 
     ;;; --- conses ---
     (funcall regh 'cl:cons #'cons)

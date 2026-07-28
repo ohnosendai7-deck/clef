@@ -43,4 +43,4 @@
 
 (defpackage #:clef/proto
   (:use #:cl)
-  (:export #:repl #:run-file))
+  (:export #:repl #:run-file #:make-standard-env))

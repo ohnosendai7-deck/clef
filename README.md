@@ -20,8 +20,32 @@ contribution policy that keeps it that way.
 
 ## Status
 
-M0a foundation landed and tested. The repository now contains a working
-zero-C toolchain skeleton:
+CLEF is in two layers today:
+
+**CLEF-H, the hosted prototype** — a working Common Lisp that **self-hosts**:
+its macro layer is defined in its own Lisp. It implements the substantial
+majority of the ANSI core language and runs on the SBCL bootstrap host:
+
+- **Evaluator** — all 25 ANSI special operators, macroexpansion, closures,
+  multiple values, non-local exits.
+- **Boot library** (self-hosting) — `defmacro`/`defun`/`defvar`-family, `setf`,
+  `incf`/`decf`/`push`/`pop`, `when`/`cond`/`case`/`and`/`or`,
+  `multiple-value-bind`, `destructuring-bind`, `dolist`/`do`/`loop`, `defstruct`,
+  quasiquote.
+- **CLOS subset** — `defclass`/`defgeneric`/`defmethod`, `make-instance`,
+  `slot-value`, class + eql specializers, standard method combination with
+  `call-next-method`.
+- **Condition system** — `define-condition`, `error`/`cerror`/`warn`,
+  `handler-case`/`handler-bind`, `restart-case`, restarts.
+- **Extended `loop`** and host-delegated `format`.
+- **~300 builtins** — numbers, conses, sequences, strings, arrays, hash tables,
+  packages, I/O, symbols.
+
+102 conformance tests, all passing (`sh tools/run-tests.sh`). See
+[CONFORMANCE.md](CONFORMANCE.md) for the coverage matrix. A REPL is available:
+`(clef/proto:repl)`.
+
+**The zero-C native toolchain (M0a foundation)** — the base for the cold core:
 
 - **lap** — an x86-64 assembler in Common Lisp (the basis of T0 copy-and-patch
   stencils).
@@ -29,16 +53,14 @@ zero-C toolchain skeleton:
 - **Cold-core smoke test** — assembles a raw-syscall hello-world, emits a
   static ELF, and **executes it**: write + exit via syscalls only. Run
   `sh tools/run-smoke.sh`.
-- **gc** — the memref raw-memory layer and Immix heap layout (size classes,
-  line/block/region constants), host-modelable so the collector can be tested
-  before any target code exists.
+- **gc** — the memref raw-memory layer and Immix heap layout.
 - **solver** — a µKanren core and a BDD set-constraint store deciding semantic
   subtyping for the boolean type fragment.
 
-30 host tests, all passing (`sh tools/run-tests.sh`). Bootstrap host is pinned
-via `manifest.scm` (`guix shell -m manifest.scm`). See the
-[issue tracker](https://github.com/ohnosendai7-deck/clef/issues) for the M0b+
-workstreams (cold core, GC, solver, reader, T0, contexts, Android, fixpoint).
+Bootstrap host is pinned via `manifest.scm` (`guix shell -m manifest.scm`). See
+the [issue tracker](https://github.com/ohnosendai7-deck/clef/issues) for the
+remaining workstreams (native cold core, GC, reader, T0 JIT, full CLOS/MOP,
+contexts, Android, self-host fixpoint).
 
 ## Design highlights
 

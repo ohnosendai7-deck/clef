@@ -38,7 +38,8 @@
                                            (:file "builtins")
                                            (:file "clos")
                                            (:file "conditions")
-                                           (:file "loop"))))))
+                                           (:file "loop")
+                                           (:file "image"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "clef/test"))))
 
 (asdf:defsystem "clef/test"
@@ -58,6 +59,7 @@
                              (:file "test-clos")
                              (:file "test-conditions")
                              (:file "test-loop")
+                             (:file "conformance")
                              (:file "run"))))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :clef-test :run-all)))
