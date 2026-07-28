@@ -673,6 +673,18 @@ CL-USER to match how the boot files are read by the host reader."
                  (eval-defstruct env name slots)
                  `',name)))
 
+    ;; %deftype: (name expander-fn-form). Evaluate the expander (a function
+    ;; of the type specifier's arguments returning the expansion) and
+    ;; register it where typep/subtypep can find it (clos.lisp registry).
+    (funcall regm "%deftype"
+             (lambda (form call-env)
+               (declare (ignore call-env))
+               (let ((name (unquote-name (cadr form)))
+                     (expander-form (caddr form)))
+                 (let ((expander (primary (clef-eval expander-form env))))
+                   (register-type-expander env name expander))
+                 `',name)))
+
     env))
 
 (defun eval-do (env vars end fn-form sequential)
@@ -723,11 +735,22 @@ FN-FORM evaluates to the body function (a lambda over the vars)."
   "The setf engine: set PLACE (a quoted place form) to VALUE."
   (cond
     ((symbolp place)
-     (clef/proto/env:set-variable-value env place value))
+     ;; A symbol place may name a symbol macro (e.g. from with-slots or
+     ;; with-accessors); setf of a symbol macro sets the expansion's place.
+     (let ((sm (clef/proto/env:lookup-symbol-macro env place)))
+       (if sm
+           (set-place env (funcall sm place env) value)
+           (clef/proto/env:set-variable-value env place value))))
     ((consp place)
      (let ((accessor (car place))
            (args (mapcar (lambda (a) (primary (clef-eval a env))) (cdr place))))
-       (set-accessor-place accessor args value)))
+       ;; Prefer a (setf accessor) function when one is bound (CLOS
+       ;; :accessor writers); otherwise dispatch to the built-in accessors.
+       (let ((setf-name (and (symbolp accessor) (list 'cl:setf accessor))))
+         (if (and setf-name (clef/proto/env:function-bound-p env setf-name))
+             (clef-apply (clef/proto/env:lookup-function env setf-name)
+                         (cons value args))
+             (set-accessor-place accessor args value)))))
     (t (error "Cannot setf ~s" place))))
 
 (defun set-accessor-place (accessor args value)

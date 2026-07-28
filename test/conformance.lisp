@@ -61,6 +61,55 @@
   (x '(defmethod conf-area ((o conf-sq)) (let ((s (slot-value o 's))) (* s s))))
   (is (eql (x1 '(conf-area (make-instance 'conf-sq :s 4))) 16)))
 
+(deftest conf-with-slots
+  (x '(defclass conf-ws () ((a :initarg :a) (b :initarg :b))))
+  ;; reading slots
+  (is (eql (x1 '(let ((o (make-instance 'conf-ws :a 1 :b 2)))
+                  (with-slots (a b) o (+ a b)))) 3))
+  ;; writing slots via setf (setf of a symbol macro sets the slot)
+  (is (eql (x1 '(let ((o (make-instance 'conf-ws :a 1 :b 2)))
+                  (with-slots (a b) o (setf a 10) (setf b 20))
+                  (+ (slot-value o 'a) (slot-value o 'b)))) 30))
+  ;; setq through a slot symbol macro also writes the slot
+  (is (eql (x1 '(let ((o (make-instance 'conf-ws :a 1 :b 2)))
+                  (with-slots (a) o (setq a 99))
+                  (slot-value o 'a))) 99))
+  ;; (var slot-name) renaming entries
+  (is (eql (x1 '(let ((o (make-instance 'conf-ws :a 7 :b 8)))
+                  (with-slots ((x a) (y b)) o (+ x y)))) 15)))
+
+(deftest conf-with-accessors
+  (x '(defclass conf-wa () ((v :initarg :v :accessor wa-v))))
+  ;; read via the accessor
+  (is (eql (x1 '(let ((o (make-instance 'conf-wa :v 5)))
+                  (with-accessors ((v wa-v)) o v))) 5))
+  ;; write via the accessor: setf of the symbol macro calls (setf wa-v)
+  (is (eql (x1 '(let ((o (make-instance 'conf-wa :v 5)))
+                  (with-accessors ((v wa-v)) o (setf v 42) v))) 42))
+  ;; direct (setf accessor) place
+  (is (eql (x1 '(let ((o (make-instance 'conf-wa :v 1)))
+                  (setf (wa-v o) 77)
+                  (slot-value o 'v))) 77)))
+
+;;; --- 4. Types and classes (deftype) ---
+
+(deftest conf-deftype
+  ;; compound type with parameters, used in typep: true and false cases
+  (x '(deftype conf-int (lo hi) `(integer ,lo ,hi)))
+  (is (eq (x1 '(typep 5 '(conf-int 1 10))) t))
+  (is (eq (x1 '(typep 50 '(conf-int 1 10))) nil))
+  (is (eq (x1 '(typep "s" '(conf-int 1 10))) nil))
+  ;; nullary deftype used as a bare symbol
+  (x '(deftype conf-nat () '(integer 0 *)))
+  (is (eq (x1 '(typep 3 'conf-nat)) t))
+  (is (eq (x1 '(typep -1 'conf-nat)) nil))
+  ;; recursive expansion: a deftype expanding into another deftype
+  (x '(deftype conf-small (hi) `(conf-int 0 ,hi)))
+  (is (eq (x1 '(typep 4 '(conf-small 9))) t))
+  (is (eq (x1 '(typep 10 '(conf-small 9))) nil))
+  ;; subtypep expands deftypes too
+  (is (eq (x1 '(subtypep '(conf-int 1 10) 'integer)) t)))
+
 ;;; --- 9. Conditions ---
 
 (deftest conf-handler-case

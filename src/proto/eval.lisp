@@ -210,10 +210,9 @@ multiple values. Empty body returns NIL."
           do (let ((sm (clef/proto/env:lookup-symbol-macro env var)))
                (setf val (primary (clef-eval form env)))
                (if sm
-                   ;; symbol macro: setq becomes setf of the expansion
-                   (let ((expansion (funcall sm var env)))
-                     ;; expansion is a place; only handle (car cell)-like cases
-                     (clef-error* "setq of symbol-macro ~s not yet supported" expansion))
+                   ;; setq of a symbol macro is setf of its expansion
+                   ;; (set-place lives in builtins.lisp, same package).
+                   (set-place env (funcall sm var env) val)
                    (clef/proto/env:set-variable-value env var val))))
     val))
 

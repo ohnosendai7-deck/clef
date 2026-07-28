@@ -50,6 +50,39 @@
       (setf (gethash :clos-generics (environment-misc-table env))
             (make-hash-table :test 'eq))))
 
+;;; --- deftype: user-defined derived type specifiers ---
+;;; Expanders live in a per-image registry (like the class registry); each
+;;; expander is a function of the specifier's arguments returning a new type
+;;; specifier. typep/subtypep expand deftype'd specifiers recursively.
+
+(defun type-expander-registry (env)
+  (or (gethash :deftype-expanders (environment-misc-table env))
+      (setf (gethash :deftype-expanders (environment-misc-table env))
+            (make-hash-table :test 'eq))))
+
+(defun register-type-expander (env name expander)
+  "Register EXPANDER (a function of the type specifier's args) for deftype
+NAME. Returns NAME."
+  (setf (gethash name (type-expander-registry env)) expander)
+  name)
+
+(defun find-type-expander (env type-spec)
+  "The deftype expander applicable to TYPE-SPEC (a symbol naming a deftype,
+or a compound specifier whose car does), else NIL."
+  (let ((name (cond ((symbolp type-spec) type-spec)
+                    ((and (consp type-spec) (symbolp (car type-spec)))
+                     (car type-spec))
+                    (t nil))))
+    (and name (gethash name (type-expander-registry env)))))
+
+(defun expand-deftype (env type-spec)
+  "One deftype expansion step. Returns (values expansion expanded-p)."
+  (let ((expander (find-type-expander env type-spec)))
+    (if expander
+        (values (clef-apply expander (if (consp type-spec) (cdr type-spec) '()))
+                t)
+        (values type-spec nil))))
+
 ;;; --- find-class / class-of ---
 
 (defun clos-find-class (env name &optional errorp)
@@ -168,7 +201,14 @@
               (:writer
                (clef/proto/env:set-function-value
                 env fname (lambda (newval obj)
-                            (setf (clos-slot-value obj slot-name) newval)))))))))
+                            (setf (clos-slot-value obj slot-name) newval)))))
+            ;; An :accessor also gets a (setf fname) function so that
+            ;; (setf (fname obj) v) works (e.g. through with-accessors).
+            (when (eq kind :accessor)
+              (clef/proto/env:set-function-value
+               env (list 'cl:setf fname)
+               (lambda (newval obj)
+                 (setf (clos-slot-value obj slot-name) newval))))))))
     name))
 
 ;;; --- defgeneric / defmethod ---
@@ -390,8 +430,9 @@ make-instance/slot-value/find-class/class-of/call-next-method functions."
 ;;; --- typep / subtypep integration ---
 
 (defun clos-typep (env obj type-spec)
-  "TYPEP understanding CLOS classes. TYPE-SPEC is a class name symbol or a
-host type specifier. Returns (values yes-p certain-p)."
+  "TYPEP understanding CLOS classes and deftype. TYPE-SPEC is a class name
+symbol, a deftype specifier, or a host type specifier. Returns (values yes-p
+certain-p)."
   (cond
     ;; a CLOS class name?
     ((and (symbolp type-spec) (clos-find-class env type-spec))
@@ -399,13 +440,20 @@ host type specifier. Returns (values yes-p certain-p)."
            (obj-class (clos-class-of env obj)))
        (values (and obj-class spec-class (subclass-of-p env obj-class spec-class))
                t)))
+    ;; a deftype? expand (recursively, via the recursive call) and retry
+    ((find-type-expander env type-spec)
+     (clos-typep env obj (expand-deftype env type-spec)))
     ;; fall back to host typep
     (t (values (typep obj type-spec) t))))
 
 (defun clos-subtypep (env t1 t2)
-  "SUBTYPEP for CLOS class names."
-  (let ((c1 (and (symbolp t1) (clos-find-class env t1)))
-        (c2 (and (symbolp t2) (clos-find-class env t2))))
-    (if (and c1 c2)
-        (values (subclass-of-p env c1 c2) t)
-        (values (subtypep t1 t2) t))))
+  "SUBTYPEP for CLOS class names and deftype specifiers."
+  (multiple-value-bind (e1 x1) (expand-deftype env t1)
+    (multiple-value-bind (e2 x2) (expand-deftype env t2)
+      (if (or x1 x2)
+          (clos-subtypep env e1 e2)
+          (let ((c1 (and (symbolp t1) (clos-find-class env t1)))
+                (c2 (and (symbolp t2) (clos-find-class env t2))))
+            (if (and c1 c2)
+                (values (subclass-of-p env c1 c2) t)
+                (values (subtypep t1 t2) t)))))))

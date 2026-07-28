@@ -305,6 +305,32 @@
 (defmacro unwind-protect (protected &rest cleanup)
   `(%unwind-protect ,protected (lambda () ,@cleanup)))
 
+;;; --- objects / types ---
+
+(defmacro with-slots (slots obj &body body)
+  "Bind each slot name as a symbol macro for (slot-value OBJ 'name).
+An entry may also be (var slot-name) to bind VAR to the named slot."
+  `(symbol-macrolet
+       ,(mapcar (lambda (s)
+                  (if (consp s)
+                      `(,(car s) (slot-value ,obj ',(cadr s)))
+                      `(,s (slot-value ,obj ',s))))
+                slots)
+     ,@body))
+
+(defmacro with-accessors (entries obj &body body)
+  "Bind each var as a symbol macro for (accessor OBJ). ENTRIES are
+(var accessor-name) pairs."
+  `(symbol-macrolet
+       ,(mapcar (lambda (e) `(,(car e) (,(cadr e) ,obj))) entries)
+     ,@body))
+
+(defmacro deftype (name lambda-list &body body)
+  "Define a derived type specifier. The expander (a function of the
+specifier's arguments) is registered where typep/subtypep can find it."
+  (let ((real-body (if (stringp (car body)) (cdr body) body)))
+    `(%deftype ',name (lambda ,lambda-list ,@real-body))))
+
 ;;; --- defstruct (minimal) ---
 
 (defmacro defstruct (name &rest slots)

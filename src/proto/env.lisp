@@ -13,7 +13,8 @@
   ;; Lexical bindings. Each is a hash table from symbol to a cons cell whose
   ;; car is the current value (so SETF is shared with captured closures).
   (vars (make-hash-table :test 'eq))
-  (funs (make-hash-table :test 'eq))
+  ;; EQUAL so that (setf symbol) function names (fresh conses) hash match.
+  (funs (make-hash-table :test 'equal))
   ;; Symbol macros: symbol -> expansion function (form env -> expansion).
   (symbol-macros (make-hash-table :test 'eq))
   ;; Block / tagbody names -> unique catch tags (gensyms).
