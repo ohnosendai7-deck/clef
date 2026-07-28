@@ -160,7 +160,17 @@ multiple values. Empty body returns NIL."
               ((string-equal (car internal) "%LOOP")
                (eval-p-loop args env))
               ((string-equal (car internal) "%SETF")
-               (eval-p-setf args env))))))
+               (eval-p-setf args env))
+              ((string-equal (car internal) "%HANDLER-CASE")
+               (eval-p-handler-case args env))
+              ((string-equal (car internal) "%HANDLER-BIND")
+               (eval-p-handler-bind args env))
+              ((string-equal (car internal) "%RESTART-CASE")
+               (eval-p-restart-case args env))
+              ((string-equal (car internal) "%IGNORE-ERRORS")
+               (eval-p-ignore-errors args env))
+              ((string-equal (car internal) "%WITH-SIMPLE-RESTART")
+               (eval-p-with-simple-restart args env))))))
   (case op
     ((quote) (car args))
     ((if)
@@ -424,3 +434,46 @@ Place subforms arrive quoted from the setf macro."
           do (set-place env place val)
              (setf last val))
     last))
+
+;;; --- condition-system special operators ---
+;;; These bridge to the implementations in conditions.lisp, turning the CLEF-H
+;;; thunk functions into host thunks.
+
+(defun %clef-thunk->host (fn env)
+  "Wrap a CLEF-H function (or NIL) as a host thunk."
+  (declare (ignore env))
+  (lambda () (clef-apply fn '())))
+
+(defun eval-p-handler-case (args env)
+  "(%handler-case thunk-fn 'clauses)."
+  (destructuring-bind (thunk-form clauses-form) args
+    (let ((thunk (primary (clef-eval thunk-form env)))
+          (clauses (primary (clef-eval clauses-form env))))
+      (eval-handler-case env (%clef-thunk->host thunk env) clauses))))
+
+(defun eval-p-handler-bind (args env)
+  "(%handler-bind 'bindings thunk-fn)."
+  (destructuring-bind (bindings-form thunk-form) args
+    (let ((bindings (primary (clef-eval bindings-form env)))
+          (thunk (primary (clef-eval thunk-form env))))
+      (eval-handler-bind env bindings (%clef-thunk->host thunk env)))))
+
+(defun eval-p-restart-case (args env)
+  "(%restart-case thunk-fn 'clauses)."
+  (destructuring-bind (thunk-form clauses-form) args
+    (let ((thunk (primary (clef-eval thunk-form env)))
+          (clauses (primary (clef-eval clauses-form env))))
+      (eval-restart-case env (%clef-thunk->host thunk env) clauses))))
+
+(defun eval-p-ignore-errors (args env)
+  "(%ignore-errors thunk-fn)."
+  (destructuring-bind (thunk-form) args
+    (let ((thunk (primary (clef-eval thunk-form env))))
+      (ignore-errors (clef-apply thunk '())))))
+
+(defun eval-p-with-simple-restart (args env)
+  "(%with-simple-restart 'name format-control format-args thunk-fn)."
+  (destructuring-bind (name format-control format-args thunk-form) args
+    (let ((thunk (primary (clef-eval thunk-form env))))
+      (with-simple-restart (name format-control format-args)
+        (clef-apply thunk '())))))

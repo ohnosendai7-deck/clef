@@ -150,7 +150,9 @@
 
 (defparameter *internal-special-operators*
   '("%DESTRUCTURING-BIND" "%MULTIPLE-VALUE-BIND" "%DO" "%DO*"
-    "%UNWIND-PROTECT" "%LOOP" "%SETF")
+    "%UNWIND-PROTECT" "%LOOP" "%SETF"
+    "%HANDLER-CASE" "%HANDLER-BIND" "%RESTART-CASE" "%IGNORE-ERRORS"
+    "%WITH-SIMPLE-RESTART")
   "Boot-time special operator names (matched by symbol-name, any package).")
 
 (defun special-operator-p (name)

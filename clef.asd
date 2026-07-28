@@ -36,7 +36,8 @@
                                            (:file "ll")
                                            (:file "eval")
                                            (:file "builtins")
-                                           (:file "clos"))))))
+                                           (:file "clos")
+                                           (:file "conditions"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "clef/test"))))
 
 (asdf:defsystem "clef/test"
@@ -54,6 +55,7 @@
                              (:file "test-solver")
                              (:file "test-proto")
                              (:file "test-clos")
+                             (:file "test-conditions")
                              (:file "run"))))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :clef-test :run-all)))
