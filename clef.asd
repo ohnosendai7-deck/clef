@@ -51,6 +51,7 @@
                              (:file "test-elf")
                              (:file "test-gc")
                              (:file "test-solver")
+                             (:file "test-proto")
                              (:file "run"))))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :clef-test :run-all)))
