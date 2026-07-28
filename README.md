@@ -20,8 +20,25 @@ contribution policy that keeps it that way.
 
 ## Status
 
-Pre-M0. The design is settled (see [docs/DESIGN.md](docs/DESIGN.md)); the
-repository is a seed. There is no runnable code yet.
+M0a foundation landed and tested. The repository now contains a working
+zero-C toolchain skeleton:
+
+- **lap** — an x86-64 assembler in Common Lisp (the basis of T0 copy-and-patch
+  stencils).
+- **elf** — a static ELF64 writer (no `ld`, no libc).
+- **Cold-core smoke test** — assembles a raw-syscall hello-world, emits a
+  static ELF, and **executes it**: write + exit via syscalls only. Run
+  `sh tools/run-smoke.sh`.
+- **gc** — the memref raw-memory layer and Immix heap layout (size classes,
+  line/block/region constants), host-modelable so the collector can be tested
+  before any target code exists.
+- **solver** — a µKanren core and a BDD set-constraint store deciding semantic
+  subtyping for the boolean type fragment.
+
+30 host tests, all passing (`sh tools/run-tests.sh`). Bootstrap host is pinned
+via `manifest.scm` (`guix shell -m manifest.scm`). See the
+[issue tracker](https://github.com/ohnosendai7-deck/clef/issues) for the M0b+
+workstreams (cold core, GC, solver, reader, T0, contexts, Android, fixpoint).
 
 ## Design highlights
 

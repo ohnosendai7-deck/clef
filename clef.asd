@@ -28,7 +28,14 @@
                              (:module "solver"
                               :serial t
                               :components ((:file "ukanren")
-                                           (:file "bdd"))))))
+                                           (:file "bdd")))
+                             (:module "proto"
+                              :serial t
+                              :components ((:file "package")
+                                           (:file "env")
+                                           (:file "ll")
+                                           (:file "eval")
+                                           (:file "builtins"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "clef/test"))))
 
 (asdf:defsystem "clef/test"

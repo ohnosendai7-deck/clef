@@ -69,7 +69,10 @@ designing anything.
 
 ## Current status
 
-Pre-M0. The design is settled; the repository is a seed. There is no code yet.
-The first milestone (M0a) is host-side infrastructure: the lap assembler DSL,
-the ELF writer, the cross-compiler skeleton, the GC model-tested on SBCL, and
-the type-solver prototype. See docs/DESIGN.md §Milestones.
+M0a foundation landed and tested (see README.md): lap x86-64 assembler, ELF
+writer, a running zero-C cold-core smoke test, GC and solver skeletons, and 30
+passing host tests. The M0b+ workstreams are tracked in the issue tracker.
+
+The first milestone work is: the cold core (raw-syscall runtime + tree-walking
+evaluator), the concurrent GC (model-tested on SBCL), the reader (clean-room),
+and growing the solver. See docs/DESIGN.md §Milestones.
