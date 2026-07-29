@@ -138,16 +138,20 @@
     (funcall regh 'cl:symbol-name #'symbol-name)
     (funcall regh 'cl:symbol-package #'symbol-package)
     (funcall regh 'cl:symbol-plist #'symbol-plist)
-    (funcall regh 'cl:boundp #'boundp)
-    (funcall regh 'cl:makunbound #'makunbound)
+    (funcall reg 'cl:boundp
+             (lambda (s) (clef/proto/contexts:context-bound-p env s)))
+    (funcall reg 'cl:makunbound
+             (lambda (s) (clef/proto/contexts:context-makunbound env s)))
     (funcall regh 'cl:fmakunbound #'fmakunbound)
     (funcall regh 'cl:gensym #'gensym)
     (funcall regh 'cl:gentemp #'gentemp)
     (funcall regh 'cl:intern #'intern)
     (funcall regh 'cl:find-symbol #'find-symbol)
     (funcall regh 'cl:make-symbol #'make-symbol)
-    (funcall regh 'cl:symbol-value #'symbol-value)
-    (funcall regh 'cl:set #'set)
+    (funcall reg 'cl:symbol-value
+             (lambda (s) (clef/proto/contexts:context-symbol-value env s)))
+    (funcall reg 'cl:set
+             (lambda (s v) (clef/proto/contexts:set-context-symbol-value env s v)))
     (funcall reg 'cl:symbol-function
              (lambda (n) (clef/proto/env:lookup-function env n)))
 
@@ -642,14 +646,16 @@ CL-USER to match how the boot files are read by the host reader."
              (lambda (form call-env)
                (declare (ignore call-env))
                (destructuring-bind (name init initp) (cdr form)
-                 (clef/proto/env:defvar* env (unquote-name name)
-                                         (and initp (primary (clef-eval init env))) initp)
+                 (clef/proto/contexts:defvar-in-context
+                  env (unquote-name name)
+                  (and initp (primary (clef-eval init env))) initp)
                  `',(unquote-name name))))
     (funcall regm "%defparameter"
              (lambda (form call-env)
                (declare (ignore call-env))
                (destructuring-bind (name init) (cdr form)
-                 (clef/proto/env:defparameter* env (unquote-name name) (primary (clef-eval init env)))
+                 (clef/proto/contexts:defparameter-in-context
+                  env (unquote-name name) (primary (clef-eval init env)))
                  `',(unquote-name name))))
     (funcall regm "%defconstant"
              (lambda (form call-env)
@@ -740,7 +746,7 @@ FN-FORM evaluates to the body function (a lambda over the vars)."
      (let ((sm (clef/proto/env:lookup-symbol-macro env place)))
        (if sm
            (set-place env (funcall sm place env) value)
-           (clef/proto/env:set-variable-value env place value))))
+           (clef/proto/contexts:set-context-variable-value env place value))))
     ((consp place)
      (let ((accessor (car place))
            (args (mapcar (lambda (a) (primary (clef-eval a env))) (cdr place))))
@@ -750,10 +756,10 @@ FN-FORM evaluates to the body function (a lambda over the vars)."
          (if (and setf-name (clef/proto/env:function-bound-p env setf-name))
              (clef-apply (clef/proto/env:lookup-function env setf-name)
                          (cons value args))
-             (set-accessor-place accessor args value)))))
+             (set-accessor-place env accessor args value)))))
     (t (error "Cannot setf ~s" place))))
 
-(defun set-accessor-place (accessor args value)
+(defun set-accessor-place (env accessor args value)
   "Set a place described by ACCESSOR applied to (evaluated) ARGS."
   (case accessor
     ((cl:car) (rplaca (car args) value))
@@ -771,7 +777,8 @@ FN-FORM evaluates to the body function (a lambda over the vars)."
     ((cl:elt) (setf (elt (car args) (cadr args)) value))
     ((cl:gethash) (setf (gethash (car args) (cadr args)) value))
     ((cl:getf) (setf (getf (car args) (cadr args)) value))
-    ((cl:symbol-value) (setf (symbol-value (car args)) value))
+    ((cl:symbol-value)
+     (clef/proto/contexts:set-context-symbol-value env (car args) value))
     ((cl:symbol-plist) (setf (symbol-plist (car args)) value))
     ((cl:fill-pointer) (setf (fill-pointer (car args)) value))
     ((cl:slot-value)

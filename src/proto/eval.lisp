@@ -78,7 +78,7 @@ multiple values. Empty body returns NIL."
      (let ((sm (clef/proto/env:lookup-symbol-macro env form)))
        (if sm
            (%eval (funcall sm form env) env)
-           (clef/proto/env:lookup-variable env form))))
+           (clef/proto/contexts:context-variable-value env form))))
     ;; compound form
     ((consp form)
      (let ((op (car form)))
@@ -213,7 +213,7 @@ multiple values. Empty body returns NIL."
                    ;; setq of a symbol macro is setf of its expansion
                    ;; (set-place lives in builtins.lisp, same package).
                    (set-place env (funcall sm var env) val)
-                   (clef/proto/env:set-variable-value env var val))))
+                   (clef/proto/contexts:set-context-variable-value env var val))))
     val))
 
 (defun eval-let (bindings body env sequential)
