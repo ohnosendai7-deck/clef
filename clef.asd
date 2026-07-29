@@ -46,7 +46,8 @@
                                            (:file "zip")
                                            (:file "axml")
                                            (:file "apk")
-                                           (:file "sign"))))))
+                                           (:file "sign")
+                                           (:file "ui"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "clef/test"))))
 
 (asdf:defsystem "clef/test"

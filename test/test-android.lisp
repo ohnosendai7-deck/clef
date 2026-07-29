@@ -233,13 +233,13 @@ where EVENTS is a list of (:start-ns prefix uri), (:end-ns prefix uri),
                         "0.1"))
       (is (member expected strings :test #'string=)
           (format nil "string pool must contain ~s" expected)))
-    ;; The resource map covers the first six pool entries (the mappable
+    ;; The resource map covers the first eight pool entries (the mappable
     ;; attribute names), in resource-ID order.
-    (is (equal resmap '(#x01010003 #x01010010 #x0101020c
-                        #x0101021b #x0101021c #x01010270)))
-    (is (equal (subseq strings 0 6)
-               '("name" "exported" "minSdkVersion" "versionCode"
-                 "versionName" "targetSdkVersion")))))
+    (is (equal resmap '(#x01010003 #x01010006 #x01010010 #x01010024
+                        #x0101020c #x0101021b #x0101021c #x01010270)))
+    (is (equal (subseq strings 0 8)
+               '("name" "hasCode" "exported" "value" "minSdkVersion"
+                 "versionCode" "versionName" "targetSdkVersion")))))
 
 (deftest android-axml-element-roundtrip
   (multiple-value-bind (strings events resmap) (axml-parse (t-manifest))
@@ -282,6 +282,139 @@ where EVENTS is a list of (:start-ns prefix uri), (:end-ns prefix uri),
                      '("name" :string "android.intent.action.MAIN")))
           (is (equal (attr category "name")
                      '("name" :string "android.intent.category.LAUNCHER"))))))))
+
+;;; --- AXML: NativeActivity (hasCode="false") manifest mode ---
+
+(defun t-native-manifest ()
+  (clef/android:write-android-manifest
+   :package "org.clef.repl" :version-name "0.1" :version-code 1
+   :min-sdk 30 :target-sdk 34
+   :has-code nil :lib-name "clef" :exported t))
+
+(deftest android-axml-native-activity
+  (multiple-value-bind (strings events resmap) (axml-parse (t-native-manifest))
+    ;; The pool carries the NativeActivity class, the lib_name meta-data
+    ;; key, and the library name itself.
+    (dolist (expected '("android.app.NativeActivity" "android.app.lib_name"
+                        "clef" "hasCode" "value" "meta-data" "application"
+                        "activity" "org.clef.repl"))
+      (is (member expected strings :test #'string=)
+          (format nil "string pool must contain ~s" expected)))
+    ;; hasCode and value joined the resource map, IDs still sorted.
+    (is (equal resmap '(#x01010003 #x01010006 #x01010010 #x01010024
+                        #x0101020c #x0101021b #x0101021c #x01010270)))
+    (let ((elements (remove-if (lambda (e) (member (first e) '(:start-ns :end-ns)))
+                               events)))
+      (flet ((attr (event name)
+               (find name (third event) :key #'first :test #'string=)))
+        (let ((application (find "application" elements :key #'second :test #'string=))
+              (activity (find "activity" elements :key #'second :test #'string=))
+              (meta-data (find "meta-data" elements :key #'second :test #'string=)))
+          ;; android:hasCode="false" as a boolean typed value on <application>.
+          (is (equal (attr application "hasCode") '("hasCode" :bool nil)))
+          ;; The fixed NativeActivity class, boolean-true android:exported.
+          (is (equal (attr activity "name")
+                     '("name" :string "android.app.NativeActivity")))
+          (is (equal (attr activity "exported") '("exported" :bool t)))
+          ;; meta-data android.app.lib_name = "clef".
+          (is (equal (attr meta-data "name")
+                     '("name" :string "android.app.lib_name")))
+          (is (equal (attr meta-data "value") '("value" :string "clef"))))))))
+
+(deftest android-axml-native-activity-default-mode-unchanged
+  ;; Default mode (has-code t): still .MainActivity, no hasCode attribute,
+  ;; no meta-data element.
+  (multiple-value-bind (strings events) (axml-parse (t-manifest))
+    (let* ((elements (remove-if (lambda (e) (member (first e) '(:start-ns :end-ns)))
+                                events))
+           (application (find "application" elements :key #'second :test #'string=))
+           (activity (find "activity" elements :key #'second :test #'string=)))
+      (is (member ".MainActivity" strings :test #'string=))
+      (is (equal (find "name" (third activity) :key #'first :test #'string=)
+                 '("name" :string ".MainActivity")))
+      (is (not (find "hasCode" (third application) :key #'first :test #'string=))
+          "default mode must not emit android:hasCode")
+      (is (not (find "meta-data" elements :key #'second :test #'string=))
+          "default mode must not emit a meta-data element"))))
+
+(deftest android-axml-native-activity-requires-lib-name
+  (signals-error (clef/android:write-android-manifest
+                  :package "org.clef.repl" :version-name "0.1" :version-code 1
+                  :min-sdk 30 :target-sdk 34 :has-code nil))
+  (signals-error (clef/android:write-android-manifest
+                  :package "org.clef.repl" :version-name "0.1" :version-code 1
+                  :min-sdk 30 :target-sdk 34 :has-code nil :lib-name "")))
+
+;;; --- UI DSL (JNI call plans) ---
+
+(defun t-plan ()
+  (clef/android:jni-plan
+   (clef/android:layout
+    (clef/android:text-view :title :text "hi")
+    (clef/android:button :ok :text "OK" :on-tap 'foo))))
+
+(defun t-plan-find (plan &key op class name)
+  (find-if (lambda (d) (and (or (null op) (eq (getf d :op) op))
+                            (or (null class) (equal (getf d :class) class))
+                            (or (null name) (equal (getf d :name) name))))
+           plan))
+
+(deftest android-ui-jni-plan
+  (let ((plan (t-plan)))
+    ;; First op instantiates the root LinearLayout.
+    (let ((first-op (first plan)))
+      (is (eq (getf first-op :op) :new-object))
+      (is (equal (getf first-op :class) "android/widget/LinearLayout"))
+      (is (eq (getf first-op :id) :root)))
+    ;; The root is configured vertical: setOrientation(1).
+    (is (equal (t-plan-find plan :name "setOrientation")
+               '(:op :call-method :id :root :class "android/widget/LinearLayout"
+                 :name "setOrientation" :signature "(I)V" :args (1))))
+    ;; A TextView is instantiated and gets setText("hi") with the real
+    ;; CharSequence signature.
+    (is (t-plan-find plan :op :new-object :class "android/widget/TextView"))
+    (is (equal (t-plan-find plan :class "android/widget/TextView" :name "setText")
+               '(:op :call-method :id :title :class "android/widget/TextView"
+                 :name "setText" :signature "(Ljava/lang/CharSequence;)V"
+                 :args ("hi"))))
+    ;; A Button is instantiated and its click listener references the
+    ;; on-tap symbol as data.
+    (is (t-plan-find plan :op :new-object :class "android/widget/Button"))
+    (let ((listener (t-plan-find plan :name "setOnClickListener")))
+      (is listener)
+      (is (eq (getf listener :id) :ok))
+      (is (equal (getf listener :class) "android/widget/Button"))
+      (is (equal (getf listener :signature)
+                 "(Landroid/view/View$OnClickListener;)V"))
+      (is (equal (getf listener :args) '((:callback foo)))))
+    ;; The children are attached to the root.
+    (is (member '(:op :add-view :parent :root :child :title) plan :test #'equal))
+    (is (member '(:op :add-view :parent :root :child :ok) plan :test #'equal))
+    ;; Every id referenced by an :add-view op was defined by an earlier
+    ;; :new-object op (parent-first ordering).
+    (let ((defined '()))
+      (dolist (d plan)
+        (case (getf d :op)
+          (:new-object (push (getf d :id) defined))
+          (:add-view
+           (is (member (getf d :parent) defined)
+               "add-view parent must be instantiated earlier in the plan")
+           (is (member (getf d :child) defined)
+               "add-view child must be instantiated earlier in the plan")))))))
+
+(deftest android-ui-text-input-hint
+  (let ((plan (clef/android:jni-plan
+               (clef/android:layout
+                (clef/android:text-input :entry :hint "type here")))))
+    ;; A text-input lowers to android/widget/EditText ...
+    (is (t-plan-find plan :op :new-object :class "android/widget/EditText"))
+    ;; ... with setHint when :hint is given.
+    (is (equal (t-plan-find plan :name "setHint")
+               '(:op :call-method :id :entry :class "android/widget/EditText"
+                 :name "setHint" :signature "(Ljava/lang/CharSequence;)V"
+                 :args ("type here"))))
+    ;; No setText when :text was not given.
+    (is (not (t-plan-find plan :name "setText")))))
 
 ;;; --- APK packager ---
 

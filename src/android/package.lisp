@@ -24,4 +24,9 @@
    #:der-parse #:der-node-tag #:der-node-children #:der-node-content
    #:der-node-raw #:der-integer-value
    ;; signing
-   #:sign-apk))
+   #:sign-apk
+   ;; ui (JNI call-plan DSL)
+   #:widget #:widget-p #:make-widget
+   #:widget-kind #:widget-id #:widget-properties #:widget-children
+   #:widget-property #:widget-property-p
+   #:text-view #:text-input #:button #:layout #:jni-plan))

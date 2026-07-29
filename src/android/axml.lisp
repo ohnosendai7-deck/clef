@@ -40,7 +40,9 @@
 ;;; resource map is parallel to the first pool entries.
 (defparameter +attr-resource-ids+
   '(("name"             . #x01010003)
+    ("hasCode"          . #x01010006)
     ("exported"         . #x01010010)
+    ("value"            . #x01010024)
     ("minSdkVersion"    . #x0101020c)
     ("versionCode"      . #x0101021b)
     ("versionName"      . #x0101021c)
@@ -239,19 +241,36 @@ string-pool indices to their public resource IDs."
 ;;; --- manifest tree ---
 
 (defun manifest-tree (package version-name version-code min-sdk target-sdk
-                      main-activity)
-  "Build the manifest element tree: (name attrs child1 child2 ...)."
-  `("manifest" (("package" ,package :string nil)
-                ("versionCode" ,version-code :int :android)
-                ("versionName" ,version-name :string :android))
-    ("uses-sdk" (("minSdkVersion" ,min-sdk :int :android)
-                 ("targetSdkVersion" ,target-sdk :int :android)))
-    ("application" ()
-      ("activity" (("name" ,main-activity :string :android)
-                   ("exported" t :bool :android))
-        ("intent-filter" ()
-          ("action" (("name" "android.intent.action.MAIN" :string :android)))
-          ("category" (("name" "android.intent.category.LAUNCHER" :string :android))))))))
+                      main-activity has-code lib-name exported)
+  "Build the manifest element tree: (name attrs child1 child2 ...).
+When HAS-CODE is nil, build a NativeActivity manifest instead (no dex;
+LIB-NAME names the .so via the android.app.lib_name meta-data) and
+MAIN-ACTIVITY is ignored — the NativeActivity class name is fixed."
+  (if has-code
+      `("manifest" (("package" ,package :string nil)
+                    ("versionCode" ,version-code :int :android)
+                    ("versionName" ,version-name :string :android))
+        ("uses-sdk" (("minSdkVersion" ,min-sdk :int :android)
+                     ("targetSdkVersion" ,target-sdk :int :android)))
+        ("application" ()
+          ("activity" (("name" ,main-activity :string :android)
+                       ("exported" t :bool :android))
+            ("intent-filter" ()
+              ("action" (("name" "android.intent.action.MAIN" :string :android)))
+              ("category" (("name" "android.intent.category.LAUNCHER" :string :android)))))))
+      `("manifest" (("package" ,package :string nil)
+                    ("versionCode" ,version-code :int :android)
+                    ("versionName" ,version-name :string :android))
+        ("uses-sdk" (("minSdkVersion" ,min-sdk :int :android)
+                     ("targetSdkVersion" ,target-sdk :int :android)))
+        ("application" (("hasCode" nil :bool :android))
+          ("activity" (("name" "android.app.NativeActivity" :string :android)
+                       ("exported" ,exported :bool :android))
+            ("meta-data" (("name" "android.app.lib_name" :string :android)
+                          ("value" ,lib-name :string :android)))
+            ("intent-filter" ()
+              ("action" (("name" "android.intent.action.MAIN" :string :android)))
+              ("category" (("name" "android.intent.category.LAUNCHER" :string :android)))))))))
 
 (defun axml-intern-tree (pool tree)
   "First pass: intern every string the TREE will reference (element names,
@@ -280,12 +299,22 @@ attribute names, string values, namespace prefix/URI)."
 
 (defun write-android-manifest (&key package version-name version-code
                                  min-sdk target-sdk
-                                 (main-activity ".MainActivity"))
+                                 (main-activity ".MainActivity")
+                                 (has-code t) lib-name exported)
   "Write a binary (AXML) AndroidManifest.xml and return it as a byte vector.
 
 PACKAGE is the application ID string, VERSION-NAME a string, VERSION-CODE,
 MIN-SDK and TARGET-SDK integers, MAIN-ACTIVITY the activity class name
-string (default \".MainActivity\")."
+string (default \".MainActivity\").
+
+When HAS-CODE is nil the APK carries no dex bytecode: the <application>
+element is attributed android:hasCode=\"false\" and the launcher activity
+is android.app.NativeActivity (MAIN-ACTIVITY is ignored). LIB-NAME must
+then be a non-empty string naming the native library; it is emitted as the
+android.app.lib_name meta-data value (docs/ANDROID-ABI.md section 1). In
+this mode EXPORTED supplies the activity's android:exported boolean (a
+launcher activity needs true to be launchable on API 31+); in the default
+mode the historical android:exported=\"true\" is kept."
   (unless (and (stringp package) (plusp (length package)))
     (error "PACKAGE must be a non-empty string"))
   (unless (stringp version-name)
@@ -293,11 +322,15 @@ string (default \".MainActivity\")."
   (dolist (n (list version-code min-sdk target-sdk))
     (unless (and (integerp n) (not (minusp n)))
       (error "VERSION-CODE, MIN-SDK and TARGET-SDK must be non-negative integers")))
-  (unless (stringp main-activity)
-    (error "MAIN-ACTIVITY must be a string"))
+  (if has-code
+      (unless (stringp main-activity)
+        (error "MAIN-ACTIVITY must be a string"))
+      (unless (and (stringp lib-name) (plusp (length lib-name)))
+        (error "LIB-NAME must be a non-empty string when HAS-CODE is nil")))
   (let* ((pool (%make-axml-pool))
          (tree (manifest-tree package version-name version-code
-                              min-sdk target-sdk main-activity))
+                              min-sdk target-sdk main-activity
+                              has-code lib-name exported))
          (attr-names (mapcar #'car +attr-resource-ids+)))
     ;; Intern the mappable attribute names first, in resource-ID order, so
     ;; the resource map is parallel to pool indices 0..k-1.
