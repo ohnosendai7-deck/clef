@@ -29,6 +29,13 @@
                                            (:file "sweep")
                                            (:file "evac")
                                            (:file "model")))
+                             (:module "reader"
+                              :serial t
+                              :components ((:file "package")
+                                           (:file "readtable")
+                                           (:file "locations")
+                                           (:file "reader")
+                                           (:file "dispatch")))
                              (:module "solver"
                               :serial t
                               :components ((:file "ukanren")
@@ -37,6 +44,7 @@
                               :serial t
                               :components ((:file "package")
                                            (:file "env")
+                                           (:file "contexts")
                                            (:file "ll")
                                            (:file "eval")
                                            (:file "builtins")
@@ -69,11 +77,13 @@
                              (:file "test-gc-model")
                              (:file "test-solver")
                              (:file "test-proto")
+                             (:file "test-contexts")
                              (:file "test-clos")
                              (:file "test-conditions")
                              (:file "test-loop")
                              (:file "conformance")
                              (:file "test-android")
+                             (:file "test-reader")
                              (:file "run"))))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :clef-test :run-all)))

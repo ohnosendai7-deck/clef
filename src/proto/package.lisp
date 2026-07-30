@@ -31,6 +31,18 @@
    ;; declarations
    #:proclaim-special #:special-variable-p))
 
+(defpackage #:clef/proto/contexts
+  (:use #:cl)
+  (:export #:*current-context*
+           #:package-context #:package-context-p
+           #:make-package-context #:sync-context
+           #:with-package-env #:call-in-fresh-thread-context
+           ;; resolution entry points used by the evaluator and builtins
+           #:context-variable-value #:set-context-variable-value
+           #:context-symbol-value #:set-context-symbol-value
+           #:context-bound-p #:context-makunbound
+           #:defvar-in-context #:defparameter-in-context))
+
 (defpackage #:clef/proto/ll
   (:use #:cl)
   (:export #:parse-lambda-list #:bind-lambda-list #:lambda-list-keywords-p))
