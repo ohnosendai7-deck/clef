@@ -25,6 +25,13 @@
                               :serial t
                               :components ((:file "memref")
                                            (:file "heap")))
+                             (:module "reader"
+                              :serial t
+                              :components ((:file "package")
+                                           (:file "readtable")
+                                           (:file "locations")
+                                           (:file "reader")
+                                           (:file "dispatch")))
                              (:module "solver"
                               :serial t
                               :components ((:file "ukanren")
@@ -69,6 +76,7 @@
                              (:file "test-loop")
                              (:file "conformance")
                              (:file "test-android")
+                             (:file "test-reader")
                              (:file "run"))))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :clef-test :run-all)))
