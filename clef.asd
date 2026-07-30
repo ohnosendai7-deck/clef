@@ -40,6 +40,7 @@
                               :serial t
                               :components ((:file "package")
                                            (:file "env")
+                                           (:file "contexts")
                                            (:file "ll")
                                            (:file "eval")
                                            (:file "builtins")
@@ -71,6 +72,7 @@
                              (:file "test-gc")
                              (:file "test-solver")
                              (:file "test-proto")
+                             (:file "test-contexts")
                              (:file "test-clos")
                              (:file "test-conditions")
                              (:file "test-loop")
