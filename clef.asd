@@ -29,7 +29,9 @@
                               :serial t
                               :components ((:file "package")
                                            (:file "readtable")
-                                           (:file "reader")))
+                                           (:file "locations")
+                                           (:file "reader")
+                                           (:file "dispatch")))
                              (:module "solver"
                               :serial t
                               :components ((:file "ukanren")

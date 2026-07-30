@@ -7,6 +7,7 @@
   (:shadow #:read #:read-preserving-whitespace #:read-from-string
            #:read-delimited-list #:*readtable* #:*read-base*
            #:*read-default-float-format* #:*read-suppress* #:*read-eval*
+           #:*features*
            #:copy-readtable #:set-macro-character #:get-macro-character
            #:make-dispatch-macro-character #:set-dispatch-macro-character
            #:get-dispatch-macro-character #:set-syntax-from-char
@@ -24,4 +25,11 @@
    ;; entry points
    #:read #:read-preserving-whitespace #:read-from-string #:read-delimited-list
    ;; quasiquote representation (plain lists, interned here)
-   #:quasiquote #:unquote #:unquote-splicing))
+   #:quasiquote #:unquote #:unquote-splicing
+   ;; source locations
+   #:source-location #:source-location-p
+   #:source-location-file #:source-location-line #:source-location-column
+   #:source-location-end-line #:source-location-end-column
+   #:form-source-location #:*record-symbol-locations* #:*source-file*
+   ;; features for #+/#
+   #:*features*))

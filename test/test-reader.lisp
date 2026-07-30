@@ -128,3 +128,125 @@ line\"") (format nil "multi~%line")))
   (is (eq (clef/reader:read-from-string "" nil :eof) :eof))
   (signals-error (r ""))
   (signals-error (r "\"unterminated")))
+
+;;; --- dispatch macros (ANSI §2.4.8) ---
+
+(deftest reader-sharp-quote
+  (is (equal (r "#'car") '(function car)))
+  ;; structural check (host and clef readers intern into different packages
+  ;; here; the cross-check is on shape + symbol names)
+  (let ((form (r "#'(lambda (x) x)")))
+    (is (eq (car form) 'function))
+    (is (string= (symbol-name (car (second form))) "LAMBDA"))))
+
+(deftest reader-sharp-vector
+  (is (equalp (r "#(1 2 3)") #(1 2 3)))
+  (is (equalp (r "#()") #()))
+  ;; dotted list inside our #(...) is read as a list then coerced to vector
+  (let ((v (r "#(a . (b))")))
+    (is (and (vectorp v) (= (length v) 2)))))
+
+(deftest reader-sharp-bitvector
+  (is (equalp (r "#*1010") #*1010))
+  (is (equalp (r "#*") #*))
+  (is (equalp (r "#3*10") #*100))        ; last bit (0) repeated to length
+  (is (equalp (r "#4*1") #*1111))        ; last bit (1) repeated
+  (signals-error (r "#*12")))
+
+(deftest reader-sharp-uninterned
+  (let ((s (r "#:foo")))
+    (is (symbolp s))
+    (is (null (symbol-package s)))
+    (is (string= (symbol-name s) "FOO"))))
+
+(deftest reader-sharp-eval
+  (is (eql (r "#.(+ 1 2)") 3))
+  (let ((clef/reader:*read-eval* nil))
+    (signals-error (r "#.(+ 1 2)"))))
+
+(deftest reader-sharp-block-comment
+  (is (eql (r "#| comment |# 2") 2))
+  (is (eql (r "#| outer #| inner |# still comment |# 42") 42))
+  (signals-error (r "#| unterminated")))
+
+(deftest reader-sharp-features
+  (let ((clef/reader:*features* '(:clef-test-feat)))
+    (is (eql (r "#+:clef-test-feat 42") 42))
+    (is (eql (r "#-:clef-test-feat 7 42") 42))     ; 7 skipped, 42 read
+    (is (eql (r "#+(and :clef-test-feat) 42") 42))
+    (is (eql (r "#+(or :no-such-feat :clef-test-feat) 42") 42))
+    (is (eql (r "#+(not :clef-test-feat) 7 42") 42))
+    (is (eql (r "#+:no-such-feat 7 42") 42))))
+
+(deftest reader-sharp-complex
+  (is (eql (r "#C(1 2)") #C(1 2)))
+  (is (eql (r "#C(0 1)") #C(0 1)))
+  (signals-error (r "#C(1 2 3)")))
+
+(deftest reader-sharp-labels
+  (let ((x (r "#1=(a b . #1#)")))
+    (is (eq x (cddr x))))
+  (is (equal (r "(#2=(1) #2#)") '((1) (1))))
+  (signals-error (r "#9#")))
+
+(deftest reader-sharp-radix
+  (is (eql (r "#xFF") 255))
+  (is (eql (r "#o17") 15))
+  (is (eql (r "#b101") 5))
+  (is (eql (r "#x-10") -16))
+  (is (eql (r "#16rFF") 255))
+  (is (eql (r "#2r101") 5))
+  (is (eql (r "#36rZ") 35))
+  (signals-error (r "#2r12"))
+  (signals-error (r "#37r10")))
+
+(deftest reader-sharp-char
+  (is (char= (r "#\\a") #\a))
+  (is (char= (r "#\\A") #\A))
+  (is (char= (r "#\\Newline") #\Newline))
+  (is (char= (r "#\\newline") #\Newline))
+  (is (char= (r "#\\Space") #\Space))
+  (is (char= (r "#\\(") #\())
+  (signals-error (r "#\\Bogus")))
+
+(deftest reader-sharp-unknown
+  (signals-error (r "#q12")))
+
+;;; --- source locations ---
+
+(deftest reader-locations-conses
+  (let* ((form (r "(1 (2 3)
+4)"))
+         (loc (clef/reader:form-source-location form)))
+    (is (clef/reader:source-location-p loc))
+    (is (eql (clef/reader:source-location-line loc) 1))
+    (is (eql (clef/reader:source-location-column loc) 1))
+    (is (eql (clef/reader:source-location-end-line loc) 2))
+    ;; inner form (2 3) starts at line 1 col 4
+    (let ((inner-loc (clef/reader:form-source-location (second form))))
+      (is (clef/reader:source-location-p inner-loc))
+      (is (eql (clef/reader:source-location-line inner-loc) 1))
+      (is (eql (clef/reader:source-location-column inner-loc) 4)))))
+
+(deftest reader-locations-multiline
+  (let* ((form (r "; header comment
+(alpha
+  (beta 2)
+  gamma)"))
+         (inner (second form))
+         (inner-loc (clef/reader:form-source-location inner)))
+    (is (clef/reader:source-location-p inner-loc))
+    (is (eql (clef/reader:source-location-line inner-loc) 3))
+    (is (eql (clef/reader:source-location-column inner-loc) 3))))
+
+(deftest reader-locations-atoms
+  ;; strings get locations
+  (is (clef/reader:source-location-p
+       (clef/reader:form-source-location (r "\"hello\""))))
+  ;; uninterned symbols get locations
+  (is (clef/reader:source-location-p
+       (clef/reader:form-source-location (r "#:sym"))))
+  ;; fixnums do NOT (immediates; EQ identity useless)
+  (is (null (clef/reader:form-source-location (r "42"))))
+  ;; unattached objects return nil
+  (is (null (clef/reader:form-source-location (list 1 2 3)))))

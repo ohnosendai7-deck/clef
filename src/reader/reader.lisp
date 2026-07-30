@@ -302,9 +302,8 @@ in a parallel bit vector."
               (t (push ch chars)))))
     (coerce (nreverse chars) 'string)))
 
-(defun read-list (tr rt)
-  "Read a ( ... ) list including dotted-pair syntax. Consumes the (."
-  (tr-read-char tr) ; consume (
+(defun %read-list-body (tr rt)
+  "Read list elements up to the closing ). Does NOT consume an opening (."
   (let ((elems '()) (seen-dot nil) (dotted-tail nil))
     (loop
       (unless (skip-intertoken tr rt)
@@ -331,12 +330,17 @@ in a parallel bit vector."
                   (unless (char= (tr-peek-char tr) #\))
                     (rerr tr "Multiple objects after dot in list"))
                   (tr-read-char tr) ; consume )
-                  (return-from read-list
+                  (return-from %read-list-body
                     (nreconc elems dotted-tail)))
                 (tr-unread-char tr #\.))))
         (when seen-dot (rerr tr "Multiple objects after dot in list"))
         (push (%read-object tr rt t) elems)))
     (nreverse elems)))
+
+(defun read-list (tr rt)
+  "Read a ( ... ) list including dotted-pair syntax. Consumes the (."
+  (tr-read-char tr) ; consume (
+  (%read-list-body tr rt))
 
 (defun read-quote (tr rt)
   (tr-read-char tr) ; consume '
@@ -357,13 +361,31 @@ in a parallel bit vector."
 ;;;; --- the reader ---
 
 (defun %read-object (tr rt eof-error-p &optional eof-value recursive-p)
-  "Read one object. If *read-suppress*, parse and discard."
-  (unless (skip-intertoken tr rt)
-    (if eof-error-p
-        (error 'clef-reader-error :stream (tracker-stream tr)
-               :line (tracker-line tr) :column (tracker-column tr)
-               :detail "End of file")
-        (return-from %read-object eof-value)))
+  "Read one object. If *read-suppress*, parse and discard.
+Captures source locations (locations.lisp) for every object read.
+Skippable forms (comments, failed feature conditionals) loop to the
+next object; at top level EOF after a skip behaves per eof-error-p."
+  (loop
+    (unless (skip-intertoken tr rt)
+      (if eof-error-p
+          (error 'clef-reader-error :stream (tracker-stream tr)
+                 :line (tracker-line tr) :column (tracker-column tr)
+                 :detail "End of file")
+          (return-from %read-object eof-value)))
+    (let ((start-line (tracker-line tr))
+          (start-col (tracker-column tr)))
+      (let ((object (%read-object-raw tr rt)))
+        (unless (eq object +skip-marker+)
+          (unless *read-suppress*
+            (%attach-location object start-line start-col
+                              (tracker-line tr) (tracker-column tr)))
+          (return-from %read-object object))))))
+
+(defvar +skip-marker+ (gensym "SKIP")
+  "Returned by reader macros that produce no object (comments, #+/- fails).")
+
+(defun %read-object-raw (tr rt)
+  "The read dispatch proper (no location capture)."
   (let* ((ch (tr-peek-char tr))
          (syn (aref (clef-readtable-syntax rt) (char-code ch))))
     (flet ((suppress (thunk)
@@ -378,6 +400,11 @@ in a parallel bit vector."
            (#\( (suppress (lambda () (read-list tr rt))))
            (#\) (rerr tr "Unmatched close parenthesis"))
            (otherwise (rerr tr "No reader macro for ~c" ch))))
+        (:non-terminating-macro
+         (if (char= ch #\#)
+             (read-sharp-dispatch tr rt)
+             (multiple-value-bind (token escaped) (read-token tr rt)
+               (unless *read-suppress* (token->object token escaped rt tr)))))
         (:single-escape
          (multiple-value-bind (token escaped) (read-token tr rt)
            (unless *read-suppress* (token->object token escaped rt tr))))
@@ -387,13 +414,14 @@ in a parallel bit vector."
         (:whitespace (rerr tr "Internal: whitespace after skip"))
         (otherwise
          (multiple-value-bind (token escaped) (read-token tr rt)
-           (declare (ignore recursive-p))
            (unless *read-suppress* (token->object token escaped rt tr))))))))
 
 (defun read (&optional stream (eof-error-p t) eof-value recursive-p)
   "Read one object from STREAM (ANSI read)."
   (with-tracked-stream (tr (or stream *standard-input*))
-    (%read-object tr *readtable* eof-error-p eof-value recursive-p)))
+    (let ((*label-table* (unless recursive-p nil)))
+      (declare (special *label-table*))
+      (%read-object tr *readtable* eof-error-p eof-value recursive-p))))
 
 (defun read-preserving-whitespace (&optional stream (eof-error-p t) eof-value recursive-p)
   "ANSI read-preserving-whitespace. Our token reader never consumes the
@@ -408,7 +436,9 @@ terminating whitespace, so this is equivalent to read."
   (let* ((sub (make-string-input-stream string start end))
          (obj nil))
     (with-tracked-stream (tr sub)
-      (setf obj (%read-object tr *readtable* eof-error-p eof-value nil))
+      (let ((*label-table* nil))
+        (declare (special *label-table*))
+        (setf obj (%read-object tr *readtable* eof-error-p eof-value nil)))
       ;; index: chars consumed = position in the sub-stream. Peek-ahead may
       ;; have consumed one char past the token (the terminating char stays
       ;; UNREAD in the stream, so file-position is exact here).
