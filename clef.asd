@@ -24,7 +24,11 @@
                              (:module "gc"
                               :serial t
                               :components ((:file "memref")
-                                           (:file "heap")))
+                                           (:file "heap")
+                                           (:file "mark")
+                                           (:file "sweep")
+                                           (:file "evac")
+                                           (:file "model")))
                              (:module "reader"
                               :serial t
                               :components ((:file "package")
@@ -70,6 +74,7 @@
                              (:file "test-lap")
                              (:file "test-elf")
                              (:file "test-gc")
+                             (:file "test-gc-model")
                              (:file "test-solver")
                              (:file "test-proto")
                              (:file "test-contexts")
